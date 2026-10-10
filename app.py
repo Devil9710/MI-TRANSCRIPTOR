@@ -9,7 +9,6 @@ st.set_page_config(page_title="Transcriptor de Audio", layout="centered")
 st.title("🎙️ Mi Transcriptor de Audio a Texto")
 st.write("Sube cualquier archivo de audio (MP3, WAV, M4A) para obtener la transcripción exacta.")
 
-# Opciones de modelos activos compatibles
 modelo = st.sidebar.selectbox(
     "Modelo de IA:",
     ["gemini-3.8-flash", "gemini-3.5-transcribe"]
@@ -27,7 +26,7 @@ if api_key:
         st.audio(archivo)
         
         if st.button("Comenzar Transcripción"):
-            with st.spinner("Procesando y transcribiendo en la nube..."):
+            with st.spinner("Procesando y transcribiendo en la nube... Esto puede tomar unos instantes."):
                 extension = f".{archivo.name.split('.')[-1]}"
                 with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temporal:
                     temporal.write(archivo.read())
@@ -35,11 +34,17 @@ if api_key:
 
                 audio_subido = None
                 try:
-                    # 1. Subir audio
+                    # 1. Subir archivo
                     audio_subido = client.files.upload(file=ruta_temporal)
                     
-                    # Espera corta para que el servidor procese el archivo grande
-                    time.sleep(3)
+                    # 2. Esperar hasta que el archivo esté procesado en Google
+                    with st.spinner("Verificando procesamiento del archivo en la nube..."):
+                        while audio_subido.state.name == "PROCESSING":
+                            time.sleep(3)
+                            audio_subido = client.files.get(name=audio_subido.name)
+
+                        if audio_subido.state.name == "FAILED":
+                            raise Exception("El servidor no pudo procesar el archivo de audio subido.")
 
                     orden = (
                         "Transcribe todo el contenido de este archivo de audio de forma estrictamente "
@@ -47,7 +52,7 @@ if api_key:
                         "frases, no corrijas errores gramaticales del hablante ni omitas muletillas."
                     )
 
-                    # 2. Generar con reintento si el servidor está ocupado (503)
+                    # 3. Solicitud con reintento para evitar errores 503
                     respuesta = None
                     for intento in range(3):
                         try:
@@ -58,19 +63,24 @@ if api_key:
                             break
                         except Exception as e:
                             if "503" in str(e) and intento < 2:
-                                time.sleep(5)
+                                time.sleep(6)
                                 continue
                             raise e
 
-                    st.success("¡Transcripción terminada con éxito!")
-                    st.text_area("Texto transcrito:", respuesta.text, height=350)
+                    texto_resultado = respuesta.text if (respuesta and respuesta.text) else ""
 
-                    st.download_button(
-                        label="Descargar transcripción (.txt)",
-                        data=respuesta.text,
-                        file_name=f"transcripcion_{archivo.name}.txt",
-                        mime="text/plain"
-                    )
+                    if texto_resultado.strip():
+                        st.success("¡Transcripción terminada con éxito!")
+                        st.text_area("Texto transcrito:", texto_resultado, height=350)
+
+                        st.download_button(
+                            label="Descargar transcripción (.txt)",
+                            data=texto_resultado,
+                            file_name=f"transcripcion_{archivo.name}.txt",
+                            mime="text/plain"
+                        )
+                    else:
+                        st.warning("El modelo completó la solicitud pero no devolvió texto. Prueba cambiando el modelo en la barra lateral.")
 
                 except Exception as error:
                     st.error(f"Ocurrió un error: {error}")
