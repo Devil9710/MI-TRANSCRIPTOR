@@ -9,14 +9,29 @@ st.set_page_config(page_title="Transcriptor de Audio", layout="centered")
 st.title("🎙️ Mi Transcriptor de Audio a Texto")
 st.write("Sube cualquier archivo de audio para obtener la transcripción exacta.")
 
-api_key = st.secrets.get("GEMINI_API_KEY")
+# Si ya la escribiste en esta sesión, la recuerda
+if "api_key_guardada" not in st.session_state:
+    st.session_state.api_key_guardada = ""
+
+# Intentar leer desde secrets o desde la sesión activa
+api_key = st.secrets.get("GEMINI_API_KEY", "") or st.session_state.api_key_guardada
+
 if not api_key:
-    api_key = st.text_input("Pega aquí tu Gemini API Key:", type="password")
+    input_key = st.text_input("Pega aquí tu Gemini API Key:", type="password")
+    if input_key:
+        st.session_state.api_key_guardada = input_key
+        api_key = input_key
+        st.rerun()
 
 if api_key:
+    # Opción discreta en la barra lateral por si alguna vez quieres cambiarla
+    if st.sidebar.button("Cambiar API Key"):
+        st.session_state.api_key_guardada = ""
+        st.rerun()
+
     client = genai.Client(api_key=api_key)
     
-    # Obtener únicamente los modelos que tu API Key tiene permitidos
+    # Modelos activos en tu cuenta
     try:
         modelos_disponibles = [
             m.name.replace("models/", "") 
@@ -42,10 +57,8 @@ if api_key:
 
                 audio_subido = None
                 try:
-                    # Subir archivo a Google
                     audio_subido = client.files.upload(file=ruta_temporal)
                     
-                    # Esperar a que Google complete el procesamiento interno
                     while audio_subido.state.name == "PROCESSING":
                         time.sleep(3)
                         audio_subido = client.files.get(name=audio_subido.name)
@@ -63,7 +76,6 @@ if api_key:
                     area_texto = st.empty()
                     texto_completo = ""
 
-                    # Flujo en tiempo real para no agotar el tiempo de espera en audios largos
                     for chunk in client.models.generate_content_stream(
                         model=modelo_elegido,
                         contents=[orden, audio_subido]
@@ -93,5 +105,3 @@ if api_key:
                             pass
                     if os.path.exists(ruta_temporal):
                         os.remove(ruta_temporal)
-else:
-    st.info("Ingresa tu API Key para habilitar la transcripción.")
